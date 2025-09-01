@@ -2,21 +2,15 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
-  <title>新幹線シミュレーション</title>
+  <title>新幹線シミュレーション（のぞみ）</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css">
   <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
   <style>
-    body { font-family: sans-serif; }
-    #map { height: 600px; margin-top: 10px; }
-    select { font-size: 16px; padding: 4px; }
-
-    /* 列車用SVGの見た目 */
-    .train-icon { background: transparent; }
+    #map { height: 600px; }
     .train-icon svg {
-        width: 30px; height: 30px;
-        transform-origin: 50% 50%;
-        transition: transform 0.2s linear;
-        filter: drop-shadow(0 1px 2px rgba(0,0,0,.3));
+      width: 30px; height: 30px;
+      filter: drop-shadow(0 1px 2px rgba(0,0,0,.3));
+      transition: transform 0.2s linear;
     }
     .train-body { fill: #ffffff; stroke: #0f172a; stroke-width: 2; }
     .train-window { fill: #60a5fa; }
@@ -24,159 +18,124 @@
   </style>
 </head>
 <body>
-  <h2>東海道・山陽新幹線シミュレーション</h2>
-  <label>列車種別を選択: 
-    <select id="trainType">
-      <option value="nozomi.json">のぞみ</option>
-      <option value="hikari.json">ひかり</option>
-      <option value="kodama.json">こだま</option>
-    </select>
-  </label>
-
+  <h2>のぞみシミュレーション（東京〜博多）</h2>
   <div id="map"></div>
 
   <script>
-    // ---- 駅データ ----
-    var stations = {
+    // ---- 駅座標 ----
+    const stations = {
       "東京":[35.681236,139.767125],
       "品川":[35.628710,139.738604],
       "新横浜":[35.507456,139.617585],
       "名古屋":[35.170915,136.881537],
-      "京都":[34.9851978,135.758997],
+      "京都":[34.985197,135.758997],
       "新大阪":[34.733453,135.500173],
-      "新神戸":[34.706255,135.195783],
       "岡山":[34.6661,133.9177],
-      "広島":[34.3975,132.475544],
-      "小倉":[33.8871,130.882861],
+      "広島":[34.3975,132.4755],
+      "小倉":[33.8871,130.8830],
       "博多":[33.590354,130.420031]
     };
 
-    // ---- Leaflet map ----
-    var map = L.map('map').setView([35.0,137.0],6);
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{ maxZoom: 18 }).addTo(map);
-
-    // 駅マーカー
-    for (var s in stations) {
-      L.marker(stations[s]).addTo(map).bindPopup(s);
-    }
-
-    // ---- 列車関連 ----
-    let timetables = [];
+    let sectionTimes = null;
+    let departures = null;
     let trains = [];
 
-    // プルダウンで切替
-    const trainSelect = document.getElementById("trainType");
-    trainSelect.addEventListener("change", () => {
-      loadTimetable(trainSelect.value);
+    // ---- ファイル読み込み ----
+    Promise.all([
+      fetch("section_times.json").then(r => r.json()),
+      fetch("nozomi_departures.json").then(r => r.json())
+    ]).then(([sec, dep]) => {
+      sectionTimes = sec;
+      departures = dep;
+      initMap();
+      initTrains();
+      setInterval(updateTrains, 1000);
     });
 
-    // JSON読込 → 列車マーカー配置
-    function loadTimetable(jsonFile) {
-      fetch(jsonFile)
-        .then(res => res.json())
-        .then(data => {
-          timetables = data;
+    // ---- 地図 ----
+    let map;
+    function initMap() {
+      map = L.map('map').setView([35.0,137.0],6);
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+        { maxZoom: 18 }).addTo(map);
 
-          // 既存マーカー消去
-          trains.forEach(t => map.removeLayer(t));
-          trains = [];
-
-          // 新しいマーカー作成
-          timetables.forEach(tt => {
-            const firstStation = tt.schedule[0].station;
-            const marker = L.marker(stations[firstStation], { icon: makeTrainDivIcon(tt.name) })
-              .addTo(map)
-              .bindPopup(tt.name);
-            trains.push(marker);
-          });
-        })
-        .catch(err => console.error("読み込み失敗:", err));
+      for (const s in stations) {
+        L.marker(stations[s]).addTo(map).bindPopup(s);
+      }
     }
 
-    // ---- 新幹線アイコンSVG ----
-    function makeTrainDivIcon(label = "") {
-      const html = `
-        <div aria-label="${label}">
-          <svg viewBox="0 0 64 64" role="img">
-            <path class="train-body" d="M10 34 L40 34 C53 34 58 30 60 26 L60 22 C58 18 53 14 40 14 L20 14 C14 14 10 18 10 22 Z"/>
-            <path class="train-nose" d="M40 34 C55 34 62 28 62 23 C62 20 60 18 57 18 C54 18 50 20 46 22 C42 24 39 28 40 34 Z"/>
-            <rect class="train-window" x="22" y="18" width="6" height="6" rx="1.5"/>
-            <rect class="train-window" x="30" y="18" width="6" height="6" rx="1.5"/>
-            <rect class="train-window" x="38" y="18" width="6" height="6" rx="1.5"/>
-            <ellipse cx="22" cy="35" rx="4" ry="2" fill="#334155"/>
-            <ellipse cx="38" cy="35" rx="4" ry="2" fill="#334155"/>
-          </svg>
-        </div>`;
-      return L.divIcon({
-        html,
-        className: 'train-icon',
-        iconSize: [30, 30],
-        iconAnchor: [15, 15],
-        popupAnchor: [0, -18]
+    // ---- 列車初期化 ----
+    function initTrains() {
+      departures.forEach(dep => {
+        const schedule = buildSchedule(dep);
+        const marker = L.marker(stations["東京"], {
+          icon: makeTrainIcon(dep.name)
+        }).addTo(map).bindPopup(dep.name);
+        trains.push({name: dep.name, schedule, marker});
       });
     }
 
-    // ---- 位置更新処理 ----
-    function parseTime(t) {
-      var parts = t.split(":");
-      var d = new Date();
-      d.setHours(parseInt(parts[0]));
-      d.setMinutes(parseInt(parts[1]));
-      d.setSeconds(0);
+    // ---- 出発時刻＋区間時間からスケジュールを展開 ----
+    function buildSchedule(dep) {
+      const sched = [];
+      let t = parseTime(dep.dep);
+      sched.push({station:"東京", time:new Date(t)});
+      sectionTimes.down.forEach(sec => {
+        t = new Date(t.getTime() + sec.time*60000);
+        sched.push({station: sec.to, time: new Date(t)});
+      });
+      return sched;
+    }
+
+    // ---- 時刻パース ----
+    function parseTime(str) {
+      const [h,m] = str.split(":").map(Number);
+      const d = new Date();
+      d.setHours(h,m,0,0);
       return d;
     }
+
+    // ---- 補間 ----
     function interpolate(p1,p2,ratio){
       return [p1[0]+(p2[0]-p1[0])*ratio, p1[1]+(p2[1]-p1[1])*ratio];
     }
-    function bearingDeg(from, to) {
-      const toRad = d => d * Math.PI / 180;
-      const toDeg = r => r * 180 / Math.PI;
-      const [lat1, lon1] = from.map(toRad);
-      const [lat2, lon2] = to.map(toRad);
-      const dLon = lon2 - lon1;
-      const y = Math.sin(dLon) * Math.cos(lat2);
-      const x = Math.cos(lat1)*Math.cos(lat2)*Math.cos(dLon) - Math.sin(lat1)*Math.sin(lat2);
-      let brng = toDeg(Math.atan2(y, x));
-      brng = (brng + 360) % 360;
-      return brng;
+
+    // ---- SVGアイコン ----
+    function makeTrainIcon(label="") {
+      const html = `
+        <svg viewBox="0 0 64 64">
+          <path class="train-body" d="M10 34 L40 34 C53 34 58 30 60 26 L60 22 C58 18 53 14 40 14 L20 14 C14 14 10 18 10 22 Z"/>
+          <path class="train-nose" d="M40 34 C55 34 62 28 62 23 C62 20 60 18 57 18 C54 18 50 20 46 22 C42 24 39 28 40 34 Z"/>
+          <rect class="train-window" x="22" y="18" width="6" height="6" rx="1.5"/>
+          <rect class="train-window" x="30" y="18" width="6" height="6" rx="1.5"/>
+          <rect class="train-window" x="38" y="18" width="6" height="6" rx="1.5"/>
+        </svg>`;
+      return L.divIcon({
+        html, className: "train-icon", iconSize:[30,30], iconAnchor:[15,15]
+      });
     }
 
-    function updateTimetable() {
+    // ---- 更新 ----
+    function updateTrains() {
       const now = new Date();
-
-      timetables.forEach((tt, idx) => {
-        const sched = tt.schedule;
-        for (let i = 0; i < sched.length - 1; i++) {
-          const depTime = sched[i].dep ? parseTime(sched[i].dep) : parseTime(sched[i].arr);
-          const arrTime = sched[i+1].arr ? parseTime(sched[i+1].arr) : parseTime(sched[i+1].dep);
-
-          if (now >= depTime && now <= arrTime) {
-            const ratio = (now - depTime) / (arrTime - depTime);
+      trains.forEach(train => {
+        const sched = train.schedule;
+        for (let i=0; i<sched.length-1; i++) {
+          const t1 = sched[i].time;
+          const t2 = sched[i+1].time;
+          if (now >= t1 && now <= t2) {
+            const ratio = (now - t1)/(t2 - t1);
             const from = stations[sched[i].station];
             const to   = stations[sched[i+1].station];
-            if (!from || !to) break;
-
-            const pos = interpolate(from, to, ratio);
-            trains[idx].setLatLng(pos);
-            trains[idx].setPopupContent(`${tt.name}<br>${sched[i].station} → ${sched[i+1].station}`);
-
-            const el = trains[idx].getElement();
-            if (el) {
-              const svg = el.querySelector('svg');
-              if (svg) {
-                const deg = bearingDeg(from, to) + 0;
-                svg.style.transform = `rotate(${deg}deg)`;
-              }
+            if (from && to) {
+              const pos = interpolate(from,to,ratio);
+              train.marker.setLatLng(pos);
+              train.marker.setPopupContent(`${train.name}<br>${sched[i].station}→${sched[i+1].station}`);
             }
-            break;
           }
         }
       });
     }
-    setInterval(updateTimetable, 1000);
-
-    // 初期ロード
-    loadTimetable("nozomi.json");
   </script>
 </body>
 </html>

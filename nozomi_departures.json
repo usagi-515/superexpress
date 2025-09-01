@@ -1,8 +1,10 @@
 [
   {"name": "のぞみ1号", "direction": "down", "dep": "06:00"},
   {"name": "のぞみ3号", "direction": "down", "dep": "06:10"},
-  {"name": "のぞみ2号", "direction": "up", "dep": "06:00"}
+  {"name": "のぞみ2号", "direction": "up", "dep": "06:00"},
+  {"name": "のぞみ57号", "direction": "down", "dep": "18:12"},
   {"name": "のぞみ64号", "direction": "up", "dep": "19:00"}
 ]
+
 
 

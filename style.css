@@ -1,0 +1,19 @@
+html, body, #map {
+  height: 100%;
+}
+body {
+  margin: 0px;
+}
+#map {
+  z-index: 1;
+}
+/* 時刻表示のためのスタイル */
+#time {
+  background-color: white;
+  border: 1px solid black;
+  padding: 3px 10px;
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  z-index: 2;
+}

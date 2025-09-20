@@ -1,129 +1,15 @@
 <!DOCTYPE html>
 <html lang="ja">
-<head>
-  <meta charset="UTF-8">
-  <title>新幹線シミュレーション（のぞみ）</title>
-  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css">
-  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
-  <style>
-    #map { height: 600px; }
-    .train-icon { background: transparent; }
-    .train-icon svg {
-      width: 30px; height: 30px;
-      transform-origin: 50% 50%;
-      transition: transform 0.2s linear;
-      filter: drop-shadow(0 1px 2px rgba(0,0,0,.3));
-    }
-    .train-body { fill: #fff; stroke: #0f172a; stroke-width: 2; }
-    .train-window { fill: #60a5fa; }
-    .train-nose { fill: #94a3b8; }
-  </style>
-</head>
-<body>
-  <h2>東海道・山陽新幹線 のぞみシミュレーション</h2>
-  <div id="map"></div>
-
-  <script>
-    // ---- 駅座標 ----
-    const stations = {
-      "東京":[35.681236,139.767125],
-      "品川":[35.628710,139.738604],
-      "新横浜":[35.507456,139.617585],
-      "名古屋":[35.170915,136.881537],
-      "京都":[34.985197,135.759],
-      "新大阪":[34.733453,135.500173],
-      "新神戸":[34.706255,135.195783],
-      "岡山":[34.6661,133.9177],
-      "広島":[34.3975,132.475544],
-      "小倉":[33.8871,130.882861],
-      "博多":[33.590354,130.420031]
-    };
-
-    // ---- 地図描画 ----
-    const map = L.map('map').setView([34.7, 135.5], 6);
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 18 }).addTo(map);
-
-    for (let s in stations) {
-      L.marker(stations[s]).addTo(map).bindPopup(s);
-    }
-
-    // ---- SVGアイコン ----
-    function makeTrainDivIcon(label="") {
-      const html = `
-        <div aria-label="${label}">
-          <svg viewBox="0 0 64 64">
-            <path class="train-body" d="M10 34 L40 34 C53 34 58 30 60 26 L60 22 C58 18 53 14 40 14 L20 14 C14 14 10 18 10 22 Z"/>
-            <path class="train-nose" d="M40 34 C55 34 62 28 62 23 C62 20 60 18 57 18 C54 18 50 20 46 22 C42 24 39 28 40 34 Z"/>
-            <rect class="train-window" x="22" y="18" width="6" height="6" rx="1.5"/>
-            <rect class="train-window" x="30" y="18" width="6" height="6" rx="1.5"/>
-            <rect class="train-window" x="38" y="18" width="6" height="6" rx="1.5"/>
-            <ellipse cx="22" cy="35" rx="4" ry="2" fill="#334155"/>
-            <ellipse cx="38" cy="35" rx="4" ry="2" fill="#334155"/>
-          </svg>
-        </div>`;
-      return L.divIcon({ html, className: 'train-icon', iconSize: [30,30], iconAnchor: [15,15], popupAnchor: [0,-18] });
-    }
-
-    // ---- ユーティリティ ----
-    function parseTime(str) {
-      const [h,m] = str.split(":").map(Number);
-      const d = new Date();
-      d.setHours(h); d.setMinutes(m); d.setSeconds(0);
-      return d;
-    }
-    function interpolate(p1,p2,r){
-      if (!p1 || !p2) return [0,0];
-      return [p1[0]+(p2[0]-p1[0])*r, p1[1]+(p2[1]-p1[1])*r];
-    }
-    function bearingDeg(from,to){
-      const toRad=d=>d*Math.PI/180, toDeg=r=>r*180/Math.PI;
-      const [lat1,lon1]=from.map(toRad), [lat2,lon2]=to.map(toRad);
-      const dLon = lon2-lon1;
-      const y = Math.sin(dLon)*Math.cos(lat2);
-      const x = Math.cos(lat1)*Math.cos(lat2)*Math.cos(dLon)-Math.sin(lat1)*Math.sin(lat2);
-      return (toDeg(Math.atan2(y,x))+360)%360;
-    }
-
-    // ---- メイン処理 ----
-    Promise.all([
-      fetch("section_times.json").then(r=>r.json()),
-      fetch("nozomi_departures.json").then(r=>r.json())
-    ])
-    .then(([sectionTimes, departures])=>{
-      const trains = departures.map(dep=>{
-        const isUp = dep.direction==="up"; // 上りか下りか
-        const route = isUp ? sectionTimes.up : sectionTimes.down;
-        const marker = L.marker(stations[isUp ? "博多":"東京"], { icon: makeTrainDivIcon(dep.name) }).addTo(map).bindPopup(dep.name);
-        return { dep, route, marker };
-      });
-
-      setInterval(()=>{
-        const now = new Date();
-        trains.forEach(t=>{
-          const sched = t.route;
-          let startStation = t.dep.direction==="up" ? "博多" : "東京";
-          let elapsed = (now - parseTime(t.dep.dep)) / 60000; // 分
-
-          for (let i=0;i<sched.length;i++){
-            const sec = sched[i];
-            const from = stations[sec.from], to = stations[sec.to];
-            if (!from || !to){
-              console.error("❌ stations未定義:", sec.from, sec.to);
-              break;
-            }
-            if (elapsed <= sec.minutes){
-              const pos = interpolate(from,to,elapsed/sec.minutes);
-              t.marker.setLatLng(pos);
-              const el = t.marker.getElement()?.querySelector("svg");
-              if (el) el.style.transform = `rotate(${bearingDeg(from,to)+90}deg)`;
-              break;
-            }
-            elapsed -= sec.minutes;
-          }
-        });
-      },1000);
-    })
-    .catch(e=>console.error(e));
-  </script>
-</body>
+  <head>
+    <meta charset="UTF-8">
+    <title>map</title>
+    <link rel="stylesheet" href="leaflet/leaflet.css">
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <div id="time"></div>
+    <div id="map"></div>
+    <script src="leaflet/leaflet.js"></script>
+    <script src="map.js"></script>
+  </body>
 </html>

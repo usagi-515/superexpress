@@ -1,126 +1,112 @@
 'use strict';
 
-// --- 設定 ---
-const SHEET_ID = '1IGYhIKXx1sqM27yYP_DdV2jlQRnl9o8cS3DK89PJSBs'; // ←あなたのID
-const SHEET_GID = 0; // シートが複数あるなら該当の gid に変更
-// gviz形式のCSV URL（Publish to web を行っていれば確実）
-//  const CSV_URL = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:csv&gid=${SHEET_GID}`;
- const CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQdAU5tsevNF4DiYewz1Oht7_f0pA6qpQR2jEdG9zb-SW9rgoxOa6wvIpD6Zhkpdd1A39WJguSqHMte/pub?gid=0&single=true&output=csv";
-
+// --- 公開CSV の URL（あなたの公開URLをそのまま） ---
+const CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQdAU5tsevNF4DiYewz1Oht7_f0pA6qpQR2jEdG9zb-SW9rgoxOa6wvIpD6Zhkpdd1A39WJguSqHMte/pub?gid=0&single=true&output=csv";
 
 // --- Leaflet 初期化 ---
-const LAT = 35.7;
-const LON = 139.8;
-const ZOOM = 5;
-const map = L.map('map').setView([LAT, LON], ZOOM);
+const map = L.map('map').setView([35.0, 135.0], 5);
 L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/pale/{z}/{x}/{y}.png', {
   maxZoom: 15,
   attribution: "&copy; <a href='https://maps.gsi.go.jp/development/ichiran.html' target='_blank'>地理院タイル</a> contributors"
 }).addTo(map);
 map.zoomControl.setPosition('bottomleft');
 
-// --- シンプルな CSV パーサ（引用符付き対応） ---
-function parseCSV(text) {
-  // CR 削除、BOM 削除
+// --- DMS (例: 242621.02N) を小数度に変換 ---
+function dmsToDecimal(dms) {
+  if (!dms) return null;
+  dms = String(dms).trim();
+  // 例: 242621.02N または 1231508.36E
+  const m = dms.match(/^(\d{2,3})(\d{2})(\d{2}(?:\.\d+)?)([NSEW])$/i);
+  if (!m) {
+    console.warn('DMS parse failed:', dms);
+    return null;
+  }
+  const deg = parseInt(m[1], 10);
+  const min = parseInt(m[2], 10);
+  const sec = parseFloat(m[3]);
+  let dec = deg + min / 60 + sec / 3600;
+  const dir = m[4].toUpperCase();
+  if (dir === 'S' || dir === 'W') dec = -dec;
+  return dec;
+}
+
+// --- CSV をパース（PapaParse がある場合はそれを使う） ---
+function parseCsvTextToObjects(text) {
+  // trim BOM/CR
   text = text.replace(/\r/g, '');
   if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
 
+  if (typeof Papa !== 'undefined') {
+    const res = Papa.parse(text, { header: true, skipEmptyLines: true });
+    return res.data;
+  }
+  // 簡易パース（ヘッダあり・カンマ区切り）
   const lines = text.trim().split('\n');
-  const rows = lines.map(line => {
-    const cells = [];
-    let cur = '', inQuotes = false;
-    for (let i = 0; i < line.length; i++) {
-      const ch = line[i];
-      if (ch === '"' ) {
-        if (inQuotes && line[i + 1] === '"') { // "" -> "
-          cur += '"'; i++;
-        } else {
-          inQuotes = !inQuotes;
-        }
-      } else if (ch === ',' && !inQuotes) {
-        cells.push(cur);
-        cur = '';
-      } else {
-        cur += ch;
-      }
-    }
-    cells.push(cur);
-    return cells.map(c => c.trim());
+  const headers = lines[0].split(',').map(h => h.trim());
+  return lines.slice(1).map(line => {
+    const cols = line.split(',').map(c => c.trim());
+    const obj = {};
+    headers.forEach((h, i) => obj[h] = cols[i] !== undefined ? cols[i] : '');
+    return obj;
   });
-  return rows;
 }
 
-// --- CSV を取得して地図に描画 ---
+// --- メイン処理 ---
 async function loadAndPlot() {
   try {
     console.log('Fetching CSV from:', CSV_URL);
     const res = await fetch(CSV_URL);
-    if (!res.ok) {
-      const txt = await res.text().catch(()=>'');
-      throw new Error(`HTTP ${res.status} ${res.statusText} — response: ${txt}`);
-    }
+    if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
     const text = await res.text();
-    const rows = parseCSV(text);
 
-    if (rows.length <= 1) {
-      console.warn('CSV has no data rows');
-      return;
-    }
+    const rows = parseCsvTextToObjects(text);
+    console.log('CSV rows loaded:', rows.length);
 
-    // ヘッダ検出（name,lat,lon 期待）
-    const header = rows[0].map(h => h.toLowerCase());
-    const nameIdx = header.indexOf('name') >= 0 ? header.indexOf('name') : 0;
-    const latIdx = header.indexOf('lat') >= 0 ? header.indexOf('lat') : 1;
-    const lonIdx = header.indexOf('lon') >= 0 ? header.indexOf('lon') : 2;
+    const markers = [];
+    rows.forEach((row, idx) => {
+      // CSV の列名に合わせて安全に参照
+      const rawLat = row['row.Lat'] || row['row.lat'] || row['Lat'] || row['lat'] || row['row.Lat '];
+      const rawLon = row['row.Lon'] || row['row.lon'] || row['Lon'] || row['lon'] || row['row.Lon '];
+      const name = row['name'] || row['Name'] || `pt${idx+1}`;
 
-    const dataRows = rows.slice(1);
+      const lat = dmsToDecimal(rawLat);
+      const lon = dmsToDecimal(rawLon);
 
-    const bounds = L.latLngBounds([]);
-    let count = 0;
-    dataRows.forEach(r => {
-      // 行が短い場合はスキップ
-      if (r.length <= Math.max(nameIdx, latIdx, lonIdx)) return;
-
-      const name = r[nameIdx] || '';
-      const lat = parseFloat(r[latIdx]);
-      const lon = parseFloat(r[lonIdx]);
+      // ログを必ず出す（デバッグ用）
+      console.log(`ROW[${idx}]`, { name, rawLat, rawLon, lat, lon });
 
       if (Number.isFinite(lat) && Number.isFinite(lon)) {
-        const marker = L.circleMarker([lat, lon], {
-          radius: 3,
+        // 視認性高めのスタイルにする（確実に目に付く）
+        const m = L.circleMarker([lat, lon], {
+          radius: 2,            // ← 大きめにしてまずは見えるように
           weight: 1,
-          fillOpacity: 0.9,
-          color: '#1f78b4',
-          fillColor: '#1f78b4'
+          color: '#e41a1c',    // 枠色
+          fillColor: '#e41a1c',// 塗り
+          fillOpacity: 0.95
         }).addTo(map);
 
-        // 常時表示ラベル
-        marker.bindTooltip(name || '(no name)', { permanent: true, direction: 'right', offset: [6, 0] }).openTooltip();
+        // 常時表示ラベル（今はデバッグなので permanent: true）
+        m.bindTooltip(name || '(no name)', { permanent: true, direction: 'right', offset: [8, 0] }).openTooltip();
 
-        bounds.extend([lat, lon]);
-        count++;
+        markers.push(m);
       } else {
-        // 緯度経度が数値でない場合のログ（デバッグ用）
-        console.warn('skip row (lat/lon invalid):', r);
+        // 無効な行はコンソールに記録
+        console.warn('skip invalid lat/lon row:', idx, row);
       }
     });
 
-    console.log(`Plotted ${count} points.`);
+    console.log(`Plotted ${markers.length} points.`);
 
-    // 全点が見えるようにズーム/センタリング
-    if (bounds.isValid()) {
-      map.fitBounds(bounds.pad(0.1));
+    if (markers.length > 0) {
+      const group = L.featureGroup(markers);
+      map.fitBounds(group.getBounds().pad(0.2));
     } else {
-      console.warn('bounds invalid — not changing view');
+      console.warn('No valid markers to fit bounds.');
     }
-
   } catch (err) {
-    console.error('Failed to load CSV:', err);
-    alert('CSV の読み込みに失敗しました。コンソールのエラーメッセージを確認してください。');
+    console.error('loadAndPlot failed:', err);
+    alert('CSV 読み込みに失敗しました（コンソール参照）: ' + err.message);
   }
 }
 
-// 起動
-window.addEventListener('DOMContentLoaded', () => {
-  loadAndPlot();
-});
+window.addEventListener('DOMContentLoaded', loadAndPlot);

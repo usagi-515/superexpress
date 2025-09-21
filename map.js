@@ -34,6 +34,30 @@ async function loadAndPlot() {
       }
     });
 
+    const geojsonLayer = L.geoJSON(data, {
+  onEachFeature: function (feature, layer) {
+    if (feature.properties && feature.properties.name) {
+      layer.bindTooltip(feature.properties.name, {
+        permanent: true,
+        direction: "top",
+        className: "map-label"
+      }).openTooltip(); // 初期状態で表示
+
+      // デフォルトでは非表示
+      layer.closeTooltip();
+
+      map.on("zoomend", function () {
+        if (map.getZoom() >= 8) {
+          layer.openTooltip();
+        } else {
+          layer.closeTooltip();
+        }
+      });
+    }
+  }
+}).addTo(map);
+
+
     cluster.addLayer(layer);
     map.addLayer(cluster);
 

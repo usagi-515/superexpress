@@ -1,7 +1,7 @@
 'use strict';
 
 // --- 公開GeoJSONのURL ---
-const GEOJSON_URL = "https://raw.githubusercontent.com/usagi_515/waypoint/main/data.geojson";
+const GEOJSON_URL = "https://raw.githubusercontent.com/usagi_515/waypoint/main/waypoints.geojson";
 
 // --- Leaflet 初期化 ---
 const map = L.map('map').setView([35.0, 135.0], 5);
